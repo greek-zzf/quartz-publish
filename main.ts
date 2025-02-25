@@ -1,89 +1,149 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import {
+	App,
+	Notice,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+} from "obsidian";
+
+import { CommandOperations } from "./CommandOperations";
+import { CommitMessageModal } from "./CommitMessageModal";
 
 // Remember to rename these classes and interfaces!
 
-interface MyPluginSettings {
-	mySetting: string;
+interface QuartzPublishSettings {
+	quartzPath: string;
+	mdPath: string;
+	htmlPath: string;
+	syncToMd: boolean;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+const DEFAULT_SETTINGS: QuartzPublishSettings = {
+	quartzPath: "",
+	mdPath: "",
+	htmlPath: "",
+	syncToMd: false,
+};
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class QuartzPublishPlugin extends Plugin {
+	settings: QuartzPublishSettings;
 
 	async onload() {
+		console.log("加载插件");
 		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
+		statusBarItemEl.setText("Status Bar Text");
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+		this.addSettingTab(new QuartzPublishSettingTab(this.app, this));
+
+		// This creates an icon in the left ribbon.
+		const ribbonIconEl = this.addRibbonIcon(
+			"dice",
+			"Quartz Publish",
+			(evt: MouseEvent) => {
+				if (!this.checkConfig()) {
+					return;
+				}
+
+				// 同步笔记到 Quartz
+				this.syncToQuartz();
+				if (this.settings.syncToMd) {
+					this.syncToMd();
+				}
+			}
+		);
+		// Perform additional things with the ribbon
+		ribbonIconEl.addClass("my-plugin-ribbon-class");
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
+		this.registerDomEvent(document, "click", (evt: MouseEvent) => {
+			console.log("click", evt);
 		});
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		this.registerInterval(
+			window.setInterval(() => console.log("setInterval"), 5 * 60 * 1000)
+		);
+	}
+
+	// 调用 git 命令
+	async syncToQuartz() {
+		const { quartzPath, mdPath, htmlPath } = this.settings;
+		new Notice("⌛️ 开始同步笔记到 Quartz");
+		
+		// 构建花园
+		await CommandOperations.buildGarden(quartzPath, mdPath, htmlPath);
+		
+		// 默认提交信息
+		const defaultMessage = `更新于 ${new Date().toLocaleString()}`;
+		
+		// 打开提交信息输入对话框
+		new CommitMessageModal(this.app, defaultMessage, async (message) => {
+			if (message.trim()) {
+				// 提交并推送到远程仓库
+				await CommandOperations.commitAndPush(quartzPath, message);
+				new Notice("✅ 同步笔记到 Quartz 完成");
+			} else {
+				new Notice('提交已取消：提交信息不能为空');
+			}
+		}).open();
+	}
+
+	async syncToMd() {
+		const { mdPath } = this.settings;
+		new Notice("⌛️ 开始同步笔记到 Markdown");
+		
+		// 默认提交信息
+		const defaultMessage = `更新于 ${new Date().toLocaleString()}`;
+		
+		// 打开提交信息输入对话框
+		new CommitMessageModal(this.app, defaultMessage, async (message) => {
+			if (message.trim()) {
+				// 同步笔记到 Markdown
+				await CommandOperations.syncToMd(mdPath, message);
+				new Notice("✅ 同步笔记到 Markdown 完成");
+			} else {
+				new Notice('提交已取消：提交信息不能为空');
+			}
+		}).open();
+	}
+
+	checkConfig() {
+		// quartzPath 为空，则提示用户输入 quartzPath
+		if (this.settings.quartzPath === "" || !this.app.vault.adapter.exists(this.settings.quartzPath)) {
+			new Notice("请先配置有效的 Quartz 本地路径");
+			return false;
+		}
+
+		// mdPath 为空，则提示用户输入 mdPath
+		if (this.settings.mdPath === "" || !this.app.vault.adapter.exists(this.settings.mdPath)) {
+			new Notice("请先配置 Markdown 文件路径");
+			return false;
+		}
+
+		// htmlPath 为空或不存在，则提示用户输入 htmlPath
+		if (this.settings.htmlPath === "" || !this.app.vault.adapter.exists(this.settings.htmlPath)) {
+			new Notice("请先配置有效的 HTML 输出路径");
+			return false;
+		}
+
+		return true;
 	}
 
 	onunload() {
-
+		console.log("禁用插件，释放资源");
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData()
+		);
 	}
 
 	async saveSettings() {
@@ -91,44 +151,66 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
+class QuartzPublishSettingTab extends PluginSettingTab {
+	plugin: QuartzPublishPlugin;
+	
+	constructor(app: App, plugin: QuartzPublishPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
-
+	
 	display(): void {
-		const {containerEl} = this;
-
+		const { containerEl } = this;
 		containerEl.empty();
-
+		
+		// Quartz 本地路径设置
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
+			.setName('Quartz 本地路径')
+			.setDesc('设置 Quartz 本地路径')
 			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+				.setPlaceholder('输入 Quartz 本地路径')
+				.setValue(this.plugin.settings.quartzPath)
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					this.plugin.settings.quartzPath = value;
 					await this.plugin.saveSettings();
+				}));
+		
+		// Markdown 文件路径设置
+		new Setting(containerEl)
+			.setName('Markdown 文件路径')
+			.setDesc('设置 Markdown 文件路径')
+			.addText(text => text
+				.setPlaceholder('输入 Markdown 文件路径')
+				.setValue(this.plugin.settings.mdPath)
+				.onChange(async (value) => {
+					this.plugin.settings.mdPath = value;
+					await this.plugin.saveSettings();
+				}));
+		
+		// HTML 输出路径设置
+		new Setting(containerEl)
+			.setName('HTML 输出路径')
+			.setDesc('设置 HTML 输出路径')
+			.addText(text => text
+				.setPlaceholder('输入 HTML 输出路径')
+				.setValue(this.plugin.settings.htmlPath)
+				.onChange(async (value) => {
+					this.plugin.settings.htmlPath = value;
+					await this.plugin.saveSettings();
+				}));
+		
+		// 验证按钮
+		new Setting(containerEl)
+			.setName('验证配置')
+			.setDesc('点击验证当前配置是否有效')
+			.addButton(button => button
+				.setButtonText('验证')
+				.onClick(async () => {
+					if (this.plugin.checkConfig()) {
+						new Notice("✅ 配置有效");
+					} else {
+						new Notice("❌ 配置无效");
+					}
 				}));
 	}
 }
