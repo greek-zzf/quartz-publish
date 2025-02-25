@@ -1,8 +1,6 @@
 import { exec } from "child_process";
 import { Notice } from "obsidian";
 import { promisify } from "util";
-import { remote } from "electron";
-import { log } from "console";
 
 // 将 exec 转换为 Promise 形式
 const execAsync = promisify(exec);
@@ -22,7 +20,7 @@ export class CommandOperations {
 	private static async executeGitCommand(
 		command: string,
 		cwd: string,
-		showNotice: boolean = true,
+		showNotice: boolean = false,
 		shell: string = "bash" // 默认使用 bash
 	): Promise<string> {
 		try {
@@ -35,8 +33,6 @@ export class CommandOperations {
 			const { stdout } = await execAsync(shellCommand, { cwd });
 			return stdout.trim();
 		} catch (error) {
-			console.log(error);
-			console.error(`命令执行失败: ${command}`, error);
 			if (showNotice) {
 				new Notice(`命令执行失败: ${error.message}`);
 			}
@@ -62,7 +58,9 @@ export class CommandOperations {
 		repoPath: string,
 		message: string
 	): Promise<void> {
-		await this.executeGitCommand(`git commit -m "${message}"`, repoPath);
+		const command = `git commit -m '${message}'`;
+		console.log(command);
+		await this.executeGitCommand(command, repoPath);
 	}
 
 	/**
@@ -76,15 +74,26 @@ export class CommandOperations {
 		await this.executeGitCommand(command, repoPath);
 	}
 
+	public static async pull(repoPath: string): Promise<void> {
+		const command = `git pull`;
+		await this.executeGitCommand(command, repoPath);
+	}
+
 	public static async buildGarden(
 		quartzPath: string,
 		mdPath: string,
 		htmlPath: string
 	): Promise<void> {
-		const { exec } = remote.require("child_process");
-		// const command = `export PATH=/Users/zhouzhaofeng/.nvm/versions/node/v20.17.0/bin:$PATH && npx quartz build -d ${mdPath} -o ${htmlPath}`;
-		const command = `Users/zhouzhaofeng/.nvm/versions/node/v20.17.0/bin/npx quartz build -d ${mdPath} -o ${htmlPath}`;
+		const command = `export PATH=/Users/zhouzhaofeng/.nvm/versions/node/v20.17.0/bin:$PATH && npx quartz build -d ${mdPath} -o ${htmlPath}`;
 		await this.executeGitCommand(command, quartzPath);
+	}
+
+	public static async writeVercelJson(htmlPath: string): Promise<void> {
+		const vercelFile = `{
+			"cleanUrls": true
+		}`;
+		const command = `echo '${vercelFile}' > ${htmlPath}/vercel.json`;
+		await this.executeGitCommand(command, htmlPath);
 	}
 
 	public static async syncToMd(
@@ -104,25 +113,23 @@ export class CommandOperations {
 
 	/**
 	 * 执行完整的 Git 工作流：add, commit, push
-	 * @param repoPath 仓库路径
+	 * @param htmlPath 仓库路径
 	 * @param commitMessage 提交信息，默认为当前时间
 	 */
 	public static async commitAndPush(
-		repoPath: string,
+		htmlPath: string,
 		commitMessage: string = `更新于 ${new Date().toLocaleString()}`
 	): Promise<void> {
-		try {
 			// 执行 git add
-			await this.add(repoPath);
+			await this.add(htmlPath);
 
 			// 执行 git commit
-			await this.commit(repoPath, commitMessage);
+			await this.commit(htmlPath, commitMessage);
+
+			// 执行 git pull
+			await this.pull(htmlPath);
 
 			// 执行 git push
-			await this.push(repoPath);
-		} catch (error) {
-			console.error("Git 操作失败:", error);
-			new Notice(`Git 操作失败: ${error.message}`);
-		}
+			await this.push(htmlPath);
 	}
 }

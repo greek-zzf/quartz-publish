@@ -4,9 +4,8 @@ export class CommitMessageModal extends Modal {
 	message: string;
 	onSubmit: (message: string) => void;
 
-	constructor(app: App, defaultMessage: string, onSubmit: (message: string) => void) {
+	constructor(app: App, onSubmit: (message: string) => void) {
 		super(app);
-		this.message = defaultMessage;
 		this.onSubmit = onSubmit;
 	}
 
@@ -17,7 +16,7 @@ export class CommitMessageModal extends Modal {
 
 		new Setting(contentEl)
 			.setName('提交信息')
-			.setDesc('输入 Git 提交信息')
+			.setDesc('输入 Git 提交信息, 默认为当前时间')
 			.addText(text => text
 				.setValue(this.message)
 				.onChange(value => {

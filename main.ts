@@ -5,7 +5,6 @@ import {
 	PluginSettingTab,
 	Setting,
 } from "obsidian";
-
 import { CommandOperations } from "./CommandOperations";
 import { CommitMessageModal } from "./CommitMessageModal";
 
@@ -25,6 +24,7 @@ const DEFAULT_SETTINGS: QuartzPublishSettings = {
 	syncToMd: false,
 };
 
+
 export default class QuartzPublishPlugin extends Plugin {
 	settings: QuartzPublishSettings;
 
@@ -34,7 +34,7 @@ export default class QuartzPublishPlugin extends Plugin {
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText("Status Bar Text");
+		statusBarItemEl.setText("🔄 待发布");
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new QuartzPublishSettingTab(this.app, this));
@@ -49,9 +49,9 @@ export default class QuartzPublishPlugin extends Plugin {
 				}
 
 				// 同步笔记到 Quartz
-				this.syncToQuartz();
+				this.syncToQuartz(statusBarItemEl);
 				if (this.settings.syncToMd) {
-					this.syncToMd();
+					this.syncToMd(statusBarItemEl);
 				}
 			}
 		);
@@ -71,45 +71,54 @@ export default class QuartzPublishPlugin extends Plugin {
 	}
 
 	// 调用 git 命令
-	async syncToQuartz() {
+	async syncToQuartz(statusBarItemEl: HTMLElement) {
 		const { quartzPath, mdPath, htmlPath } = this.settings;
-		new Notice("⌛️ 开始同步笔记到 Quartz");
+		statusBarItemEl.setText("⚙️ 开始构建花园...");
 		
-		// 构建花园
-		await CommandOperations.buildGarden(quartzPath, mdPath, htmlPath);
-		
-		// 默认提交信息
-		const defaultMessage = `更新于 ${new Date().toLocaleString()}`;
-		
-		// 打开提交信息输入对话框
-		new CommitMessageModal(this.app, defaultMessage, async (message) => {
-			if (message.trim()) {
-				// 提交并推送到远程仓库
-				await CommandOperations.commitAndPush(quartzPath, message);
-				new Notice("✅ 同步笔记到 Quartz 完成");
-			} else {
-				new Notice('提交已取消：提交信息不能为空');
-			}
-		}).open();
+		try {
+			// 构建花园
+			await CommandOperations.buildGarden(quartzPath, mdPath, htmlPath);
+			await CommandOperations.writeVercelJson(htmlPath);
+			statusBarItemEl.setText("⌛️ 构建花园完成，等待提交...");
+			
+			// 打开提交信息输入对话框
+			new CommitMessageModal(this.app, async (message) => {
+				try {
+					statusBarItemEl.setText("⌛️ 发布中...");
+					if (message && message.trim()) {
+						// 提交并推送到远程仓库
+						await CommandOperations.commitAndPush(htmlPath, message);
+						statusBarItemEl.setText("✅ 已发布");
+					} else {
+						// 提交并推送到远程仓库
+						await CommandOperations.commitAndPush(htmlPath);
+						statusBarItemEl.setText("✅ 已发布");
+					}
+				} catch (error) {
+					console.error("提交和推送过程中出错:", error);
+					statusBarItemEl.setText("❌ 发布失败");
+					new Notice(`发布失败: ${error.message || '未知错误'}`);
+				}
+			}).open();
+		} catch (error) {
+			console.error("构建花园过程中出错:", error);
+			statusBarItemEl.setText("❌ 构建失败");
+			new Notice(`构建花园失败: ${error.message || '未知错误'}`);
+		}
 	}
 
-	async syncToMd() {
+	async syncToMd(statusBarItemEl: HTMLElement) {
 		const { mdPath } = this.settings;
-		new Notice("⌛️ 开始同步笔记到 Markdown");
+		statusBarItemEl.setText("⌛️ 更新源文件中...");
 		
-		// 默认提交信息
-		const defaultMessage = `更新于 ${new Date().toLocaleString()}`;
-		
-		// 打开提交信息输入对话框
-		new CommitMessageModal(this.app, defaultMessage, async (message) => {
-			if (message.trim()) {
-				// 同步笔记到 Markdown
-				await CommandOperations.syncToMd(mdPath, message);
-				new Notice("✅ 同步笔记到 Markdown 完成");
-			} else {
-				new Notice('提交已取消：提交信息不能为空');
-			}
-		}).open();
+		try {
+			// 同步笔记到 Markdown
+			await CommandOperations.syncToMd(mdPath);
+			statusBarItemEl.setText("✅ 更新源文件完成");
+		} catch (error) {
+			console.error("同步到Markdown过程中出错:", error);
+			statusBarItemEl.setText("❌ 更新源文件失败");
+		}	
 	}
 
 	checkConfig() {
